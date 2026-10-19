@@ -545,6 +545,34 @@ async function openReport(){
   document.getElementById("rp-open").onclick = ()=>{ close(); if(!window.open(url, "_blank")) location.href = url; setTimeout(()=>URL.revokeObjectURL(url), 300000); };
   document.getElementById("rp-x").onclick = ()=>{ close(); URL.revokeObjectURL(url); };
 }
+// 「データを転送」: 日報PDFと生データCSVの2ファイルを作り、共有する(メール・LINE・AirDropなど)
+// 共有の操作は、ボタンを押した直後でないと端末に拒否されることがある。PDFが裏で作成済みならその場で共有し、
+// 作成中なら「作成しています…」を出して、できあがったら「共有する」ボタンを出す。
+async function shareFiles(files){
+  try{
+    if(navigator.canShare && navigator.canShare({files})) await navigator.share({files, title:"運転日報"});
+    else{ files.forEach((f,i)=>setTimeout(()=>saveFile(f), i*400)); alert("この端末では共有画面を開けないため、ファイルをダウンロードしました"); }
+  }catch(e){ /* 共有の取りやめ */ }
+}
+async function transferData(){
+  if(pdfCache && pdfCache.key===nippoKey() && pdfCache.file){ await shareFiles([pdfCache.file, csvFile()]); return; }
+  const m = document.getElementById("modal"), close = ()=>{ m.innerHTML = ""; };
+  const panel = inner => { m.innerHTML = `<div class="mback"><div class="panel mpanel" role="dialog" aria-modal="true">${inner}</div></div>`; };
+  let cancelled = false;
+  panel('<p class="msg" style="font-size:20px">日報PDFとCSVを作成しています…</p><button id="tx-x" class="ghost">閉じる</button>');
+  document.getElementById("tx-x").onclick = ()=>{ cancelled = true; close(); };
+  const pdf = await pdfFile();
+  if(cancelled) return;
+  if(!pdf){
+    panel(`<p class="msg" style="font-size:20px">日報PDFを作成できませんでした</p><p class="note">原因: ${escH((pdfErr && (pdfErr.message || pdfErr.name)) || "不明")}</p>
+      <button id="tx-go" class="alt">CSVのみ共有する</button><button id="tx-x" class="ghost">閉じる</button>`);
+    document.getElementById("tx-go").onclick = ()=>{ close(); shareFiles([csvFile()]); };
+  }else{
+    panel('<p class="msg" style="font-size:20px">日報PDFとCSVができました</p><button id="tx-go">共有する</button><button id="tx-x" class="ghost">閉じる</button>');
+    document.getElementById("tx-go").onclick = ()=>{ close(); shareFiles([pdf, csvFile()]); };
+  }
+  document.getElementById("tx-x").onclick = close;
+}
 // 「CSVで開く」: 今回の乗務の生データ(CSV)を文字として表示する
 function openCsv(){
   const url = URL.createObjectURL(new Blob(["\uFEFF" + csvText()], {type:"text/plain;charset=utf-8"}));
@@ -879,6 +907,7 @@ function render(){
          <p class="note" style="margin-top:16px">今日のデータを運行管理者に共有してください</p>
          ${S.rows.some(r=>r.lat && !r.addr) ? `<p class="err">住所が未取得の行があります。通信が戻ると自動で補完されます。緯度経度は記録済みです。</p>` : ""}
          <button id="mkpdf">日報作成</button>
+         <button id="xfer">データを転送</button>
          <button id="reset" class="ghost">本日の業務を終了する</button></div>`;
   }
   view.innerHTML = h;
@@ -1230,6 +1259,7 @@ function bind(st){
   if(st==="done"){
     $("post").onclick = ()=>openCheck("終業後点検", POST_ITEMS);
     $("mkpdf").onclick = openReport;
+    $("xfer").onclick = transferData;
     $("rep").onclick = ()=>{ reportOpen = !reportOpen; render(); if(reportOpen){ const t = $("rep-t"); t.focus(); t.scrollIntoView({block:"center", behavior:"smooth"}); } };
     if(reportOpen){
       const t = $("rep-t"); let timer = null;
