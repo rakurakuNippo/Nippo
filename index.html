@@ -498,50 +498,47 @@ async function makePdf(){
   const blob = jpegToPdf(await nippoJpeg());
   return new File([blob], `運転日報_${(S.rows[0]?.time||now()).slice(0,10)}.pdf`, {type:"application/pdf"});
 }
-// 画面表示時に先に作っておく(共有ボタン押下からの待ち時間を減らす)。記録が変われば作り直す
+// 画面表示時に先に作っておく(「日報作成」を押したときの待ち時間を減らす)。記録が変われば作り直す
 function pdfFile(){
   const key = nippoKey();
   if(!pdfCache || pdfCache.key!==key){
     const c = {key};
-    c.p = makePdf().catch(e=>{ pdfErr = e; console.error(e); if(pdfCache===c) pdfCache=null; return null; });
+    c.p = makePdf().then(f=>{ c.file = f; return f; }, e=>{ pdfErr = e; console.error(e); if(pdfCache===c) pdfCache=null; return null; });
     pdfCache = c;
   }
   return pdfCache.p;
-}
-// 「日報作成」: PDFの日報を作り、開く/保存するための画面を出す
-async function makeReport(){
-  const m = document.getElementById("modal"), close = ()=>{ m.innerHTML = ""; };
-  const panel = inner => { m.innerHTML = `<div class="mback"><div class="panel mpanel" role="dialog" aria-modal="true">${inner}</div></div>`; };
-  panel('<p class="msg" style="font-size:20px">日報PDFを作成しています…</p><button id="rp-x" class="ghost">閉じる</button>');
-  let cancelled = false; document.getElementById("rp-x").onclick = ()=>{ cancelled = true; close(); };
-  const pdf = await pdfFile();
-  if(cancelled) return;
-  if(!pdf){
-    panel(`<p class="msg" style="font-size:20px">日報PDFを作成できませんでした</p><p class="note">原因: ${escH((pdfErr && (pdfErr.message || pdfErr.name)) || "不明")}</p><button id="rp-x" class="ghost">閉じる</button>`);
-    document.getElementById("rp-x").onclick = close; return;
-  }
-  const url = URL.createObjectURL(pdf);
-  panel(`<p class="msg" style="font-size:20px">日報PDFを作成しました</p><p class="note">${escH(pdf.name)}</p>
-    <button id="rp-open" class="alt">PDFを開く</button><button id="rp-save">PDFを保存</button><button id="rp-x" class="ghost">閉じる</button>`);
-  document.getElementById("rp-open").onclick = ()=>{ if(!window.open(url, "_blank")) location.href = url; };
-  document.getElementById("rp-save").onclick = ()=>saveFile(pdf);
-  document.getElementById("rp-x").onclick = ()=>{ close(); setTimeout(()=>URL.revokeObjectURL(url), 60000); };
 }
 function saveFile(f){
   const a = document.createElement("a");
   a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
 }
-// 共有ボタン1回で「日報PDF」と「元データCSV」の2ファイルを共有する
-async function share(){
-  const csv = csvFile(), pdf = await pdfFile();
-  const files = pdf ? [pdf, csv] : [csv];
-  try{
-    if(navigator.canShare && navigator.canShare({files})){ await navigator.share({files, title:"運転日報"}); }
-    else{ files.forEach((f,i)=>setTimeout(()=>saveFile(f), i*400)); alert("共有に未対応の端末のためダウンロードしました"); }
-  }catch(e){ /* キャンセル */ }
-  // PDFを作れなかった場合は、CSVだけになったことを必ず知らせる
-  if(!pdf) alert("日報PDFを作成できなかったため、CSVのみ共有しました。\n(原因: " + ((pdfErr && (pdfErr.message || pdfErr.name)) || "不明") + ")");
+// 「日報作成」: 日報PDFをすぐに開く。作成が済んでいればそのまま開き、まだなら先に空の画面を開いて、できあがり次第PDFを表示する
+// (ボタンを押した瞬間に画面を開いておかないと、Safari では作成後に開く操作がブロックされるため)
+async function openReport(){
+  if(pdfCache && pdfCache.key===nippoKey() && pdfCache.file){
+    const url = URL.createObjectURL(pdfCache.file);
+    if(!window.open(url, "_blank")) location.href = url;
+    setTimeout(()=>URL.revokeObjectURL(url), 300000);
+    return;
+  }
+  const w = window.open("", "_blank");
+  if(w){ try{ w.document.title = "日報"; w.document.body.style.cssText = "font-family:sans-serif;font-size:18px;padding:24px"; w.document.body.textContent = "日報PDFを作成しています…"; }catch(e){} }
+  const pdf = await pdfFile();
+  if(!pdf){
+    if(w) try{ w.close(); }catch(e){}
+    alert("日報PDFを作成できませんでした。\n(原因: " + ((pdfErr && (pdfErr.message || pdfErr.name)) || "不明") + ")");
+    return;
+  }
+  const url = URL.createObjectURL(pdf);
+  if(w) w.location.href = url; else location.href = url;
+  setTimeout(()=>URL.revokeObjectURL(url), 300000);
+}
+// 「CSVで開く」: 今回の乗務の生データ(CSV)を文字として表示する
+function openCsv(){
+  const url = URL.createObjectURL(new Blob(["\uFEFF" + csvText()], {type:"text/plain;charset=utf-8"}));
+  if(!window.open(url, "_blank")) location.href = url;
+  setTimeout(()=>URL.revokeObjectURL(url), 300000);
 }
 
 // ---- 描画 ----
@@ -788,7 +785,7 @@ function renderTop(){
   const st = S.step, top = document.getElementById("topR");
   const mrg = (st==="arrive"||st==="depart"||st==="done")
     ? (mergeMode ? `<div class="tr"><button id="mrgX">中止</button><button id="mrgGo"${mergeSel.length<2?" disabled":""}>合体する</button></div>`
-                 : `<div class="tr">${st==="done" ? '<button id="mkpdf">日報作成</button>' : ""}<button id="mrg">データの合体</button></div>`) : "";
+                 : `<div class="tr">${st==="done" ? '<button id="csvopen">CSVで開く</button>' : ""}<button id="mrg">データの合体</button></div>`) : "";
   top.innerHTML = ((st==="arrive"||st==="depart") ? '<div class="tr"><button id="kiko">帰庫する</button><button id="kiko2">違法帰庫</button></div><div class="tr"><button id="shj">運行指示書</button><button id="fuel">給油</button></div>'
                 : st==="odoStart" ? '<div class="tr"><button id="deg">違法出庫</button></div>'
                 : st==="scan" ? '<div class="tr"><button id="pt" class="tiny" aria-label="手動で選択">点</button></div>'
@@ -804,7 +801,7 @@ function renderTop(){
   if(st==="odoStart") $$("deg").onclick = place("違法出庫");
   if(st==="home") $$("past").onclick = openPast;
   if(st==="scan") $$("pt").onclick = openPick;
-  if($$("mkpdf")) $$("mkpdf").onclick = makeReport;
+  if($$("csvopen")) $$("csvopen").onclick = openCsv;
   if($$("mrg")) $$("mrg").onclick = ()=>{ mergeMode = true; mergeSel = []; editIdx = null; insPos = null; insMode = null; renderTop(); renderLog(); };
   if($$("mrgX")){
     $$("mrgX").onclick = ()=>{ mergeMode = false; mergeSel = []; renderTop(); renderLog(); };
@@ -868,7 +865,7 @@ function render(){
            <button id="rep-close" class="ghost">閉じる</button></div>` : ""}
          <p class="note" style="margin-top:16px">今日のデータを運行管理者に共有してください</p>
          ${S.rows.some(r=>r.lat && !r.addr) ? `<p class="err">住所が未取得の行があります。通信が戻ると自動で補完されます。緯度経度は記録済みです。</p>` : ""}
-         <button id="sh">共有</button>
+         <button id="mkpdf">日報作成</button>
          <button id="reset" class="ghost">本日の業務を終了する</button></div>`;
   }
   view.innerHTML = h;
@@ -1219,7 +1216,7 @@ function bind(st){
 
   if(st==="done"){
     $("post").onclick = ()=>openCheck("終業後点検", POST_ITEMS);
-    $("sh").onclick = share;
+    $("mkpdf").onclick = openReport;
     $("rep").onclick = ()=>{ reportOpen = !reportOpen; render(); if(reportOpen){ const t = $("rep-t"); t.focus(); t.scrollIntoView({block:"center", behavior:"smooth"}); } };
     if(reportOpen){
       const t = $("rep-t"); let timer = null;
