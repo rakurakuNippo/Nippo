@@ -361,18 +361,27 @@ function archiveCurrent(){
 let pdfCache = null, pdfErr = null;
 const nippoKey = () => localStorage.getItem(KEY) || "";
 const blobToDataURL = b => new Promise((ok,ng)=>{ const r=new FileReader(); r.onload=()=>ok(r.result); r.onerror=ng; r.readAsDataURL(b); });
-function loadNippoFrame(){
-  // Safari は iframe の「読み込み完了」を中身の用意前に通知することがあるため、日報の紙面ができるまで待つ
+// 日報ページ(nippo.html)の本文を取得し、画面外の iframe に srcdoc として直接読み込む。
+// (iframe の src で別ページを開く方法は、iPhone では読み込めないことがあったため使わない)
+async function loadNippoFrame(){
+  let res;
+  try{ res = await fetch("nippo.html"); }catch(e){ throw new Error("日報ページを取得できません(通信エラー)"); }
+  if(!res.ok) throw new Error("日報ページを取得できません(HTTP " + res.status + ")");
+  const html = (await res.text()).replace("<head>", "<head><script>window.__err=[];addEventListener('error',function(e){__err.push(e.message)})<\/script>");
+  const f = document.createElement("iframe");
+  f.style.cssText = "position:fixed;left:0;top:0;width:1200px;height:1800px;border:0;opacity:0;pointer-events:none;z-index:-1";
+  f.setAttribute("aria-hidden", "true"); f.srcdoc = html; document.body.appendChild(f);
+  const t0 = Date.now();
   return new Promise((ok,ng)=>{
-    const f = document.createElement("iframe");
-    f.style.cssText = "position:fixed;left:-10000px;top:0;width:1200px;height:1800px;border:0;visibility:hidden";
-    f.src = "nippo.html"; document.body.appendChild(f);
-    const t0 = Date.now();
     (function wait(){
-      let sh = null;
-      try{ const d = f.contentDocument; sh = d && d.getElementById("sheet"); }catch(e){}
-      if(sh && sh.childElementCount > 0 && f.contentDocument.readyState === "complete") return ok(f);
-      if(Date.now() - t0 > 10000){ f.remove(); return ng(new Error("日報ページを読み込めませんでした")); }
+      let sh = null, d = null;
+      try{ d = f.contentDocument; sh = d && d.getElementById("sheet"); }catch(e){}
+      if(sh && sh.childElementCount > 0) return ok(f);
+      if(Date.now() - t0 > 8000){
+        let err = ""; try{ err = (f.contentWindow.__err || []).join(" / "); }catch(e){}
+        f.remove();
+        return ng(new Error("日報ページを表示できませんでした(" + (d ? "文書あり" : "文書なし") + (sh ? ",紙面空" : ",紙面なし") + (err ? ",エラー:" + err : "") + ")"));
+      }
       setTimeout(wait, 50);
     })();
   });
