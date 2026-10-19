@@ -785,7 +785,7 @@ function renderTop(){
   const st = S.step, top = document.getElementById("topR");
   const mrg = (st==="arrive"||st==="depart"||st==="done")
     ? (mergeMode ? `<div class="tr"><button id="mrgX">中止</button><button id="mrgGo"${mergeSel.length<2?" disabled":""}>合体する</button></div>`
-                 : `<div class="tr">${st==="done" ? '<button id="csvopen">CSVで開く</button>' : ""}<button id="mrg">データの合体</button></div>`) : "";
+                 : `<div class="tr">${st==="done" ? '<button id="csvopen">CSVで開く</button>' : '<button id="nip">日報</button>'}<button id="mrg">データの合体</button></div>`) : "";
   top.innerHTML = ((st==="arrive"||st==="depart") ? '<div class="tr"><button id="kiko">帰庫する</button><button id="kiko2">違法帰庫</button></div><div class="tr"><button id="shj">運行指示書</button><button id="fuel">給油</button></div>'
                 : st==="odoStart" ? '<div class="tr"><button id="deg">違法出庫</button></div>'
                 : st==="scan" ? '<div class="tr"><button id="pt" class="tiny" aria-label="手動で選択">点</button></div>'
@@ -802,6 +802,7 @@ function renderTop(){
   if(st==="home") $$("past").onclick = openPast;
   if(st==="scan") $$("pt").onclick = openPick;
   if($$("csvopen")) $$("csvopen").onclick = openCsv;
+  if($$("nip")) $$("nip").onclick = openReport;   // 途中経過の日報(その時点までの記録)をPDFで開く
   if($$("mrg")) $$("mrg").onclick = ()=>{ mergeMode = true; mergeSel = []; editIdx = null; insPos = null; insMode = null; renderTop(); renderLog(); };
   if($$("mrgX")){
     $$("mrgX").onclick = ()=>{ mergeMode = false; mergeSel = []; renderTop(); renderLog(); };
