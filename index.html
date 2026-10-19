@@ -508,6 +508,25 @@ function pdfFile(){
   }
   return pdfCache.p;
 }
+// 「日報作成」: PDFの日報を作り、開く/保存するための画面を出す
+async function makeReport(){
+  const m = document.getElementById("modal"), close = ()=>{ m.innerHTML = ""; };
+  const panel = inner => { m.innerHTML = `<div class="mback"><div class="panel mpanel" role="dialog" aria-modal="true">${inner}</div></div>`; };
+  panel('<p class="msg" style="font-size:20px">日報PDFを作成しています…</p><button id="rp-x" class="ghost">閉じる</button>');
+  let cancelled = false; document.getElementById("rp-x").onclick = ()=>{ cancelled = true; close(); };
+  const pdf = await pdfFile();
+  if(cancelled) return;
+  if(!pdf){
+    panel(`<p class="msg" style="font-size:20px">日報PDFを作成できませんでした</p><p class="note">原因: ${escH((pdfErr && (pdfErr.message || pdfErr.name)) || "不明")}</p><button id="rp-x" class="ghost">閉じる</button>`);
+    document.getElementById("rp-x").onclick = close; return;
+  }
+  const url = URL.createObjectURL(pdf);
+  panel(`<p class="msg" style="font-size:20px">日報PDFを作成しました</p><p class="note">${escH(pdf.name)}</p>
+    <button id="rp-open" class="alt">PDFを開く</button><button id="rp-save">PDFを保存</button><button id="rp-x" class="ghost">閉じる</button>`);
+  document.getElementById("rp-open").onclick = ()=>{ if(!window.open(url, "_blank")) location.href = url; };
+  document.getElementById("rp-save").onclick = ()=>saveFile(pdf);
+  document.getElementById("rp-x").onclick = ()=>{ close(); setTimeout(()=>URL.revokeObjectURL(url), 60000); };
+}
 function saveFile(f){
   const a = document.createElement("a");
   a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
@@ -769,7 +788,7 @@ function renderTop(){
   const st = S.step, top = document.getElementById("topR");
   const mrg = (st==="arrive"||st==="depart"||st==="done")
     ? (mergeMode ? `<div class="tr"><button id="mrgX">中止</button><button id="mrgGo"${mergeSel.length<2?" disabled":""}>合体する</button></div>`
-                 : '<div class="tr"><button id="mrg">データの合体</button></div>') : "";
+                 : `<div class="tr">${st==="done" ? '<button id="mkpdf">日報作成</button>' : ""}<button id="mrg">データの合体</button></div>`) : "";
   top.innerHTML = ((st==="arrive"||st==="depart") ? '<div class="tr"><button id="kiko">帰庫する</button><button id="kiko2">違法帰庫</button></div><div class="tr"><button id="shj">運行指示書</button><button id="fuel">給油</button></div>'
                 : st==="odoStart" ? '<div class="tr"><button id="deg">違法出庫</button></div>'
                 : st==="scan" ? '<div class="tr"><button id="pt" class="tiny" aria-label="手動で選択">点</button></div>'
@@ -785,6 +804,7 @@ function renderTop(){
   if(st==="odoStart") $$("deg").onclick = place("違法出庫");
   if(st==="home") $$("past").onclick = openPast;
   if(st==="scan") $$("pt").onclick = openPick;
+  if($$("mkpdf")) $$("mkpdf").onclick = makeReport;
   if($$("mrg")) $$("mrg").onclick = ()=>{ mergeMode = true; mergeSel = []; editIdx = null; insPos = null; insMode = null; renderTop(); renderLog(); };
   if($$("mrgX")){
     $$("mrgX").onclick = ()=>{ mergeMode = false; mergeSel = []; renderTop(); renderLog(); };
