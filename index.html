@@ -362,11 +362,19 @@ let pdfCache = null, pdfErr = null;
 const nippoKey = () => localStorage.getItem(KEY) || "";
 const blobToDataURL = b => new Promise((ok,ng)=>{ const r=new FileReader(); r.onload=()=>ok(r.result); r.onerror=ng; r.readAsDataURL(b); });
 function loadNippoFrame(){
+  // Safari は iframe の「読み込み完了」を中身の用意前に通知することがあるため、日報の紙面ができるまで待つ
   return new Promise((ok,ng)=>{
     const f = document.createElement("iframe");
     f.style.cssText = "position:fixed;left:-10000px;top:0;width:1200px;height:1800px;border:0;visibility:hidden";
-    f.onload = ()=>ok(f); f.onerror = ()=>ng(new Error("nippo load"));
     f.src = "nippo.html"; document.body.appendChild(f);
+    const t0 = Date.now();
+    (function wait(){
+      let sh = null;
+      try{ const d = f.contentDocument; sh = d && d.getElementById("sheet"); }catch(e){}
+      if(sh && sh.childElementCount > 0 && f.contentDocument.readyState === "complete") return ok(f);
+      if(Date.now() - t0 > 10000){ f.remove(); return ng(new Error("日報ページを読み込めませんでした")); }
+      setTimeout(wait, 50);
+    })();
   });
 }
 // 日報の画面(nippo.html)を、各要素の位置を読み取って canvas に直接描く。
