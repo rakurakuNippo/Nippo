@@ -155,7 +155,13 @@ let S = load() || fresh();
 S.rows.forEach(r=>{ if(r.kind==="違法帰庫") r.kind = "帰庫"; });
 function fresh(){ return {step:"home", rows:[], manager:"", vehicle:"", driver:"", report:"", reportTime:""}; }
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
-function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} schedulePrewarm(); }
+// 記録が変わるたびに、日報PDFを裏で作り直しておく(「日報」「日報作成」を押したらすぐ開けるように)
+let prewarmTimer = null;
+function schedulePrewarm(){
+  clearTimeout(prewarmTimer);
+  prewarmTimer = setTimeout(()=>{ if(S.rows.length && (S.step==="arrive"||S.step==="depart"||S.step==="done")) pdfFile(); }, 700);
+}
 function updateMeta(){
   metaEl.textContent = [S.vehicle ? `車両: ${S.vehicle}` : "", S.driver ? `乗務員: ${S.driver}` : "", S.manager ? `点呼者: ${S.manager}` : ""].filter(Boolean).join(" / ");
 }
@@ -513,8 +519,9 @@ function saveFile(f){
   a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
 }
-// 「日報作成」: 日報PDFをすぐに開く。作成が済んでいればそのまま開き、まだなら先に空の画面を開いて、できあがり次第PDFを表示する
-// (ボタンを押した瞬間に画面を開いておかないと、Safari では作成後に開く操作がブロックされるため)
+// 「日報作成」「日報」: 日報PDFを開く。裏で作成済みならその場で開く。
+// まだなら、この画面のまま「作成しています…」を出し、できあがったら「日報PDFを開く」ボタンを出す。
+// (作成を待つあいだ別の画面を開くと、アプリが裏に回って作成が止まるため、先に別画面は開かない)
 async function openReport(){
   if(pdfCache && pdfCache.key===nippoKey() && pdfCache.file){
     const url = URL.createObjectURL(pdfCache.file);
@@ -522,17 +529,21 @@ async function openReport(){
     setTimeout(()=>URL.revokeObjectURL(url), 300000);
     return;
   }
-  const w = window.open("", "_blank");
-  if(w){ try{ w.document.title = "日報"; w.document.body.style.cssText = "font-family:sans-serif;font-size:18px;padding:24px"; w.document.body.textContent = "日報PDFを作成しています…"; }catch(e){} }
+  const m = document.getElementById("modal"), close = ()=>{ m.innerHTML = ""; };
+  const panel = inner => { m.innerHTML = `<div class="mback"><div class="panel mpanel" role="dialog" aria-modal="true">${inner}</div></div>`; };
+  let cancelled = false;
+  panel('<p class="msg" style="font-size:20px">日報PDFを作成しています…</p><button id="rp-x" class="ghost">閉じる</button>');
+  document.getElementById("rp-x").onclick = ()=>{ cancelled = true; close(); };
   const pdf = await pdfFile();
+  if(cancelled) return;
   if(!pdf){
-    if(w) try{ w.close(); }catch(e){}
-    alert("日報PDFを作成できませんでした。\n(原因: " + ((pdfErr && (pdfErr.message || pdfErr.name)) || "不明") + ")");
-    return;
+    panel(`<p class="msg" style="font-size:20px">日報PDFを作成できませんでした</p><p class="note">原因: ${escH((pdfErr && (pdfErr.message || pdfErr.name)) || "不明")}</p><button id="rp-x" class="ghost">閉じる</button>`);
+    document.getElementById("rp-x").onclick = close; return;
   }
   const url = URL.createObjectURL(pdf);
-  if(w) w.location.href = url; else location.href = url;
-  setTimeout(()=>URL.revokeObjectURL(url), 300000);
+  panel('<p class="msg" style="font-size:20px">日報PDFができました</p><button id="rp-open">日報PDFを開く</button><button id="rp-x" class="ghost">閉じる</button>');
+  document.getElementById("rp-open").onclick = ()=>{ close(); if(!window.open(url, "_blank")) location.href = url; setTimeout(()=>URL.revokeObjectURL(url), 300000); };
+  document.getElementById("rp-x").onclick = ()=>{ close(); URL.revokeObjectURL(url); };
 }
 // 「CSVで開く」: 今回の乗務の生データ(CSV)を文字として表示する
 function openCsv(){
@@ -808,6 +819,7 @@ function renderTop(){
     $$("mrgX").onclick = ()=>{ mergeMode = false; mergeSel = []; renderTop(); renderLog(); };
     $$("mrgGo").onclick = openMerge;
   }
+  schedulePrewarm();
 }
 function render(){
   stopCamera();
