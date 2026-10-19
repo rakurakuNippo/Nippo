@@ -358,39 +358,122 @@ function archiveCurrent(){
 
 // ---- 日報PDF(端末内で生成。外部ライブラリ不要) ----
 // nippo.html を非表示のiframeで開き、紙面を画像化してA4横のPDFに包む
-let pdfCache = null;
+let pdfCache = null, pdfErr = null;
 const nippoKey = () => localStorage.getItem(KEY) || "";
 const blobToDataURL = b => new Promise((ok,ng)=>{ const r=new FileReader(); r.onload=()=>ok(r.result); r.onerror=ng; r.readAsDataURL(b); });
-function loadNippoFrame(){
+// 日報ページ(nippo.html)の本文を取得し、画面外の iframe に srcdoc として直接読み込む。
+// (iframe の src で別ページを開く方法は、iPhone では読み込めないことがあったため使わない)
+async function loadNippoFrame(){
+  let res;
+  try{ res = await fetch("nippo.html"); }catch(e){ throw new Error("日報ページを取得できません(通信エラー)"); }
+  if(!res.ok) throw new Error("日報ページを取得できません(HTTP " + res.status + ")");
+  const html = (await res.text()).replace("<head>", "<head><script>window.__err=[];addEventListener('error',function(e){__err.push(e.message)})<\/script>");
+  const f = document.createElement("iframe");
+  f.style.cssText = "position:fixed;left:0;top:0;width:1200px;height:1800px;border:0;opacity:0;pointer-events:none;z-index:-1";
+  f.setAttribute("aria-hidden", "true"); f.srcdoc = html; document.body.appendChild(f);
+  const t0 = Date.now();
   return new Promise((ok,ng)=>{
-    const f = document.createElement("iframe");
-    f.style.cssText = "position:fixed;left:-10000px;top:0;width:1200px;height:1800px;border:0;visibility:hidden";
-    f.onload = ()=>ok(f); f.onerror = ()=>ng(new Error("nippo load"));
-    f.src = "nippo.html"; document.body.appendChild(f);
+    (function wait(){
+      let sh = null, d = null;
+      try{ d = f.contentDocument; sh = d && d.getElementById("sheet"); }catch(e){}
+      if(sh && sh.childElementCount > 0) return ok(f);
+      if(Date.now() - t0 > 8000){
+        let err = ""; try{ err = (f.contentWindow.__err || []).join(" / "); }catch(e){}
+        f.remove();
+        return ng(new Error("日報ページを表示できませんでした(" + (d ? "文書あり" : "文書なし") + (sh ? ",紙面空" : ",紙面なし") + (err ? ",エラー:" + err : "") + ")"));
+      }
+      setTimeout(wait, 50);
+    })();
   });
+}
+// 日報の画面(nippo.html)を、各要素の位置を読み取って canvas に直接描く。
+// SVGの foreignObject 経由で描く方法は、Safari(iPhone)で canvas が「汚染」扱いになり PDF に変換できないため使わない。
+const px = v => parseFloat(v) || 0;
+function radiusOf(cs, w, h){
+  const v = cs.borderTopLeftRadius;
+  if(!v || v==="0px") return {r:0};
+  if(v.includes("%")){ const p = parseFloat(v); return p >= 50 ? {ell:true} : {r:p/100*Math.min(w,h)}; }
+  return {r:Math.min(parseFloat(v), w/2, h/2)};
+}
+function pathBox(cx, x, y, w, h, rad){
+  cx.beginPath();
+  if(rad.ell){ cx.ellipse(x+w/2, y+h/2, Math.max(w/2,0), Math.max(h/2,0), 0, 0, Math.PI*2); return; }
+  const r = Math.max(0, Math.min(rad.r||0, w/2, h/2));
+  if(!r){ cx.rect(x, y, w, h); return; }
+  cx.moveTo(x+r, y); cx.arcTo(x+w, y, x+w, y+h, r); cx.arcTo(x+w, y+h, x, y+h, r); cx.arcTo(x, y+h, x, y, r); cx.arcTo(x, y, x+w, y, r); cx.closePath();
+}
+function paintBorders(cx, cs, x, y, w, h, rad, collapse){
+  const sd = ["Top","Right","Bottom","Left"].map(k=>({wd:px(cs["border"+k+"Width"]), c:cs["border"+k+"Color"], st:cs["border"+k+"Style"]}))
+    .map(b=>(b.st==="none"||b.st==="hidden") ? {...b, wd:0} : b);
+  const [t,r,b,l] = sd;
+  if(!(t.wd||r.wd||b.wd||l.wd)) return;
+  if((rad.ell || rad.r>0) && t.wd===r.wd && r.wd===b.wd && b.wd===l.wd && t.c===l.c){
+    const bw = t.wd; pathBox(cx, x+bw/2, y+bw/2, w-bw, h-bw, rad.ell ? rad : {r:Math.max(0,rad.r-bw/2)});
+    cx.lineWidth = bw; cx.strokeStyle = t.c; cx.stroke(); return;
+  }
+  const e = collapse ? 0.5 : 0, f = (bd, X, Y, W, H)=>{ if(bd.wd){ cx.fillStyle = bd.c; cx.fillRect(X, Y, W, H); } };
+  if(collapse){   // 罫線を共有する表: 罫線は枠の境目を中心に引く
+    f(t, x, y-t.wd/2, w, t.wd); f(b, x, y+h-b.wd/2, w, b.wd); f(l, x-l.wd/2, y, l.wd, h); f(r, x+w-r.wd/2, y, r.wd, h);
+  }else{
+    f(t, x, y, w, t.wd); f(b, x, y+h-b.wd, w, b.wd); f(l, x, y, l.wd, h); f(r, x+w-r.wd, y, r.wd, h);
+  }
+}
+function paintText(n, cx, d, o, cs){
+  const str = n.nodeValue; if(!str || !str.trim()) return;
+  cx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`; cx.fillStyle = cs.color; cx.textBaseline = "middle"; cx.textAlign = "left";
+  const rg = d.createRange(); let i = 0;
+  for(const ch of str){
+    const L = ch.length;
+    if(ch.trim()){
+      rg.setStart(n, i); rg.setEnd(n, i+L);
+      const q = rg.getClientRects()[0];
+      if(q) cx.fillText(ch, q.left-o.left, (q.top+q.bottom)/2 - o.top);
+    }
+    i += L;
+  }
+}
+function paintEl(el, cx, d, w, o){
+  const cs = w.getComputedStyle(el);
+  if(cs.display==="none" || cs.visibility==="hidden") return;
+  const r = el.getBoundingClientRect(), x = r.left-o.left, y = r.top-o.top, wd = r.width, ht = r.height, tag = el.tagName;
+  if(tag==="IMG"){ if(el.naturalWidth) cx.drawImage(el, x, y, wd, ht); return; }
+  const rad = radiusOf(cs, wd, ht);
+  const bg = cs.backgroundColor;
+  if(bg && bg!=="transparent" && bg!=="rgba(0, 0, 0, 0)"){ cx.fillStyle = bg; pathBox(cx, x, y, wd, ht, rad); cx.fill(); }
+  const line = (x1,y1,x2,y2,c,lw)=>{ cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.lineWidth = lw; cx.strokeStyle = c; cx.stroke(); };
+  if(el.classList.contains("diag")) line(x, y, x+wd, y+ht, "#bdc3c7", 1);             // 給油表の見出しの斜線(左上→右下)
+  if(el.matches(".rep.none")) line(x+wd, y, x, y+ht, "#555", 1.5);                    // 報告事項が空のときの斜線(右上→左下)
+  const tbl = (tag==="TD"||tag==="TH") ? el.closest("table") : null;
+  paintBorders(cx, cs, x, y, wd, ht, rad, !!(tbl && w.getComputedStyle(tbl).borderCollapse==="collapse"));
+  const clip = cs.overflowX!=="visible" || cs.overflowY!=="visible";
+  if(clip){ cx.save(); pathBox(cx, x, y, wd, ht, rad); cx.clip(); }
+  if(tag==="INPUT"){
+    const v = el.value;
+    if(v){
+      cx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`; cx.fillStyle = cs.color; cx.textBaseline = "middle"; cx.textAlign = "left";
+      cx.fillText(v, x + px(cs.borderLeftWidth) + px(cs.paddingLeft), y + ht/2);
+    }
+  }else{
+    for(const n of el.childNodes){
+      if(n.nodeType===3) paintText(n, cx, d, o, cs);
+      else if(n.nodeType===1) paintEl(n, cx, d, w, o);
+    }
+  }
+  if(clip) cx.restore();
 }
 async function nippoJpeg(){
   const fr = await loadNippoFrame();
   try{
-    const d = fr.contentDocument, sheet = d.getElementById("sheet");
+    const d = fr.contentDocument, w = fr.contentWindow, sheet = d.getElementById("sheet");
     sheet.style.setProperty("--z","1"); sheet.style.margin = "0";
-    for(const im of sheet.querySelectorAll("img")){          // しるし画像を埋め込む
-      try{ const r = await fetch(im.getAttribute("src")); if(r.ok) im.setAttribute("src", await blobToDataURL(await r.blob())); }catch(e){}
-    }
-    let css = ""; d.querySelectorAll("style").forEach(st=>css += st.textContent);
-    css = css.replace(/@media print\{[\s\S]*\}\s*$/, "")
-             .replace(/&/g,"&amp;").replace(/</g,"&lt;");
-    css += ".sheet{zoom:1!important;margin:0!important}";
-    const W = 1200, H = Math.ceil(sheet.getBoundingClientRect().height);
-    const ff = d.defaultView.getComputedStyle(d.body).fontFamily.replace(/"/g,"'");   // 画面表示と同じフォント
-    const inner = `<div xmlns="http://www.w3.org/1999/xhtml" style="font-family:${ff};color:#333;line-height:normal"><style>${css}</style>${new XMLSerializer().serializeToString(sheet)}</div>`;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject width="100%" height="100%">${inner}</foreignObject></svg>`;
-    const img = new Image();
-    await new Promise((ok,ng)=>{ img.onload=ok; img.onerror=()=>ng(new Error("svg")); img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg); });
-    const K = 2, cv = document.createElement("canvas"); cv.width = W*K; cv.height = H*K;
-    const cx = cv.getContext("2d"); cx.fillStyle = "#fff"; cx.fillRect(0,0,cv.width,cv.height); cx.drawImage(img,0,0,cv.width,cv.height);
-    const blob = await new Promise(ok=>cv.toBlob(ok,"image/jpeg",0.92));
-    if(!blob) throw new Error("jpeg");
+    try{ await d.fonts.ready; }catch(e){}
+    await Promise.all([...sheet.querySelectorAll("img")].map(im=>im.decode ? im.decode().catch(()=>{}) : null));
+    const o = sheet.getBoundingClientRect(), W = 1200, H = Math.ceil(o.height), K = 2;
+    const cv = document.createElement("canvas"); cv.width = W*K; cv.height = H*K;
+    const cx = cv.getContext("2d"); cx.scale(K, K); cx.fillStyle = "#fff"; cx.fillRect(0, 0, W, H);
+    paintEl(sheet, cx, d, w, o);
+    const blob = await new Promise(ok=>cv.toBlob(ok, "image/jpeg", 0.92));
+    if(!blob) throw new Error("画像の作成に失敗");
     return {jpg:new Uint8Array(await blob.arrayBuffer()), pw:cv.width, ph:cv.height};
   } finally { fr.remove(); }
 }
@@ -420,10 +503,29 @@ function pdfFile(){
   const key = nippoKey();
   if(!pdfCache || pdfCache.key!==key){
     const c = {key};
-    c.p = makePdf().catch(()=>{ if(pdfCache===c) pdfCache=null; return null; });
+    c.p = makePdf().catch(e=>{ pdfErr = e; console.error(e); if(pdfCache===c) pdfCache=null; return null; });
     pdfCache = c;
   }
   return pdfCache.p;
+}
+// 「日報作成」: PDFの日報を作り、開く/保存するための画面を出す
+async function makeReport(){
+  const m = document.getElementById("modal"), close = ()=>{ m.innerHTML = ""; };
+  const panel = inner => { m.innerHTML = `<div class="mback"><div class="panel mpanel" role="dialog" aria-modal="true">${inner}</div></div>`; };
+  panel('<p class="msg" style="font-size:20px">日報PDFを作成しています…</p><button id="rp-x" class="ghost">閉じる</button>');
+  let cancelled = false; document.getElementById("rp-x").onclick = ()=>{ cancelled = true; close(); };
+  const pdf = await pdfFile();
+  if(cancelled) return;
+  if(!pdf){
+    panel(`<p class="msg" style="font-size:20px">日報PDFを作成できませんでした</p><p class="note">原因: ${escH((pdfErr && (pdfErr.message || pdfErr.name)) || "不明")}</p><button id="rp-x" class="ghost">閉じる</button>`);
+    document.getElementById("rp-x").onclick = close; return;
+  }
+  const url = URL.createObjectURL(pdf);
+  panel(`<p class="msg" style="font-size:20px">日報PDFを作成しました</p><p class="note">${escH(pdf.name)}</p>
+    <button id="rp-open" class="alt">PDFを開く</button><button id="rp-save">PDFを保存</button><button id="rp-x" class="ghost">閉じる</button>`);
+  document.getElementById("rp-open").onclick = ()=>{ if(!window.open(url, "_blank")) location.href = url; };
+  document.getElementById("rp-save").onclick = ()=>saveFile(pdf);
+  document.getElementById("rp-x").onclick = ()=>{ close(); setTimeout(()=>URL.revokeObjectURL(url), 60000); };
 }
 function saveFile(f){
   const a = document.createElement("a");
@@ -438,6 +540,8 @@ async function share(){
     if(navigator.canShare && navigator.canShare({files})){ await navigator.share({files, title:"運転日報"}); }
     else{ files.forEach((f,i)=>setTimeout(()=>saveFile(f), i*400)); alert("共有に未対応の端末のためダウンロードしました"); }
   }catch(e){ /* キャンセル */ }
+  // PDFを作れなかった場合は、CSVだけになったことを必ず知らせる
+  if(!pdf) alert("日報PDFを作成できなかったため、CSVのみ共有しました。\n(原因: " + ((pdfErr && (pdfErr.message || pdfErr.name)) || "不明") + ")");
 }
 
 // ---- 描画 ----
@@ -684,7 +788,7 @@ function renderTop(){
   const st = S.step, top = document.getElementById("topR");
   const mrg = (st==="arrive"||st==="depart"||st==="done")
     ? (mergeMode ? `<div class="tr"><button id="mrgX">中止</button><button id="mrgGo"${mergeSel.length<2?" disabled":""}>合体する</button></div>`
-                 : '<div class="tr"><button id="mrg">データの合体</button></div>') : "";
+                 : `<div class="tr">${st==="done" ? '<button id="mkpdf">日報作成</button>' : ""}<button id="mrg">データの合体</button></div>`) : "";
   top.innerHTML = ((st==="arrive"||st==="depart") ? '<div class="tr"><button id="kiko">帰庫する</button><button id="kiko2">違法帰庫</button></div><div class="tr"><button id="shj">運行指示書</button><button id="fuel">給油</button></div>'
                 : st==="odoStart" ? '<div class="tr"><button id="deg">違法出庫</button></div>'
                 : st==="scan" ? '<div class="tr"><button id="pt" class="tiny" aria-label="手動で選択">点</button></div>'
@@ -700,6 +804,7 @@ function renderTop(){
   if(st==="odoStart") $$("deg").onclick = place("違法出庫");
   if(st==="home") $$("past").onclick = openPast;
   if(st==="scan") $$("pt").onclick = openPick;
+  if($$("mkpdf")) $$("mkpdf").onclick = makeReport;
   if($$("mrg")) $$("mrg").onclick = ()=>{ mergeMode = true; mergeSel = []; editIdx = null; insPos = null; insMode = null; renderTop(); renderLog(); };
   if($$("mrgX")){
     $$("mrgX").onclick = ()=>{ mergeMode = false; mergeSel = []; renderTop(); renderLog(); };
