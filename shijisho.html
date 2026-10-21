@@ -94,6 +94,18 @@
         font-size: 1.8em;
     }
 
+    /* 運行管理者のしるし(中村泰輔.png)。日報より大きく、js側で線を太く加工して重ねる */
+    .stamp-box.mgr { position: relative; }
+    .mgr-seal {
+        position: absolute;
+        left: 50%; top: 54%;
+        width: 106px; height: 106px;
+        transform: translate(-50%, -50%);
+        object-fit: contain;
+        pointer-events: none;
+    }
+    .mgr-seal[hidden] { display: none; }
+
     .shijisho-title {
         text-align: center;
         border-bottom: 2px solid #2c3e50;
@@ -209,7 +221,7 @@
                         作成日：<input type="text" value="${esc(d.created)}" style="display: inline-block; width: 190px; text-align: center; border-bottom: 1px solid #333; font-weight: bold;"><br>
                         株式会社　樂涛
                     </div>
-                    <div class="stamp-box"><div class="stamp-title">運行管理者</div><div class="stamp-mark">印</div></div>
+                    <div class="stamp-box mgr"><div class="stamp-title">運行管理者</div><div class="stamp-mark">印</div><img class="mgr-seal" alt="中村泰輔" hidden></div>
                 </div>
             </div>
 
@@ -260,6 +272,45 @@
     const box = document.getElementById("sheets");
     box.innerHTML = pages.map(sheetHtml).join("");
     const sheets = Array.from(box.querySelectorAll(".sheet"));
+
+    // ---- 運行管理者のしるし: 「中村泰輔.png」を読み込み、線を太く加工して全ページの印欄に貼る ----
+    // 画像が無い・加工できない場合は、元のまま(または従来の「印」表示のまま)にする
+    (function () {
+        const imgs = document.querySelectorAll(".mgr-seal");
+        if (!imgs.length) return;
+        const src = encodeURIComponent("中村泰輔") + ".png";
+        const show = url => imgs.forEach(im => {
+            im.src = url; im.hidden = false;
+            const m = im.parentNode.querySelector(".stamp-mark"); if (m) m.style.visibility = "hidden";
+        });
+        const base = new Image();
+        base.onload = () => {
+            let url = src;
+            try {
+                const W = base.naturalWidth, H = base.naturalHeight;
+                const c = document.createElement("canvas"); c.width = W; c.height = H;
+                const x = c.getContext("2d"); x.drawImage(base, 0, 0);
+                const d = x.getImageData(0, 0, W, H), p = d.data;
+                // 白地を透明にし、朱色だけを残す
+                for (let i = 0; i < p.length; i += 4) {
+                    const a = Math.min(1, (p[i + 3] / 255) * ((255 - Math.min(p[i + 1], p[i + 2])) / 255) * 1.3);
+                    p[i] = 200; p[i + 1] = 25; p[i + 2] = 25; p[i + 3] = Math.round(a * 255);
+                }
+                x.putImageData(d, 0, 0);
+                // 少しずつずらして重ね描きし、文字と丸枠を太くする(太さは THICK で調整)
+                const THICK = 3;
+                const o = document.createElement("canvas"); o.width = W; o.height = H;
+                const y = o.getContext("2d");
+                for (const r of [THICK / 2, THICK]) for (let k = 0; k < 16; k++) {
+                    const t = k * Math.PI / 8; y.drawImage(c, r * Math.cos(t), r * Math.sin(t));
+                }
+                y.drawImage(c, 0, 0);
+                url = o.toDataURL("image/png");
+            } catch (e) { url = src; }
+            show(url);
+        };
+        base.src = src;
+    })();
 
     // URLの指定で入力欄を埋める(全ページ共通):
     //   ?customer=…&people=…&contact=…&carName=…&carPlate=…&driver=…   (embed=1 は画面内表示用)
