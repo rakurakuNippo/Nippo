@@ -794,7 +794,7 @@ function renderTop(){
                  : `<div class="tr">${st==="done" ? '<button id="csvopen">CSVで開く</button>' : '<button id="nip">日報</button>'}<button id="mrg">データの合体</button></div>`) : "";
   top.innerHTML = ((st==="arrive"||st==="depart") ? '<div class="tr"><button id="kiko">帰庫する</button><button id="kiko2">違法帰庫</button></div><div class="tr"><button id="shj">運行指示書</button><button id="fuel">給油</button></div>'
                 : st==="odoStart" ? '<div class="tr"><button id="deg">違法出庫</button></div>'
-                : st==="home" ? '<div class="tr"><button id="past">過去の日報を呼び出す</button></div>' : "") + mrg
+                : st==="home" ? '<div class="tr"><button id="corp">社用使用</button><button id="past">過去の日報を呼び出す</button></div>' : "") + mrg
     + ((st==="odoStart"||st==="arrive"||st==="depart"||st==="fuel") ? `<div class="tr"><button id="vl" class="vlBtn">${vLabelFull()}</button></div>` : "");
   const $$ = id => document.getElementById(id);
   if(st==="arrive"||st==="depart"){
@@ -804,7 +804,7 @@ function renderTop(){
     $$("shj").onclick = openShijisho;
   }
   if(st==="odoStart") $$("deg").onclick = place("違法出庫");
-  if(st==="home") $$("past").onclick = openPast;
+  if(st==="home"){ $$("past").onclick = openPast; $$("corp").onclick = startCorp; }
   if($$("csvopen")) $$("csvopen").onclick = openCsv;
   if($$("nip")) $$("nip").onclick = openReport;   // 途中経過の日報(その時点までの記録)をPDFで開く
   if($$("mrg")) $$("mrg").onclick = ()=>{ mergeMode = true; mergeSel = []; editIdx = null; editGrp = null; insPos = null; insMode = null; renderTop(); renderLog(); };
@@ -830,6 +830,7 @@ function render(){
          <input id="veh" type="number" inputmode="numeric" min="0" step="1" placeholder="例: 12" value="${escH(S.vehicle||"")}">
          <label style="font-size:16px;margin-top:18px">音声入力の言語</label>
          <div class="row"><button type="button" class="seg vseg${vlang()==="ja"?" on":""}" data-v="ja">日本語</button><button type="button" class="seg vseg${vlang()==="zh"?" on":""}" data-v="zh">中文</button></div>
+         <p class="err" id="home-err" role="alert"></p>
          <button id="start" disabled>業務を開始する</button></div>`;
   }else if(st==="inspect"){
     h = `<div class="panel"><p class="msg">日常点検をしてください</p>
@@ -1092,6 +1093,7 @@ function deleteRow(i){
   let li = S.rows.length-1; while(li>=0 && (S.rows[li].kind==="給油" || S.rows[li].kind==="休憩")) li--;
   const last = S.rows[li];
   S.step = last ? (STEP_AFTER[last.kind] || "arrive") : "home";
+  if(last && last.kind==="業務開始" && /社用使用/.test(last.note||"")) S.step = "odoStart";   // 社用使用は点検・点呼を省く
   editIdx = null; editGrp = null; save(); render();
 }
 // ---- 枠と枠の間へのデータ手入力(挿入) ----
@@ -1267,6 +1269,18 @@ function saveGroupEdit(){
   if(e){ err.textContent = e; return; }
   idxs.forEach((idx,n)=>applyEdit(S.rows[idx], vals[n]));
   finishEdit();
+}
+// 「社用使用」: 日常点検と点呼を省いて、乗務開始ODOメーターの入力へ進む
+function startCorp(){
+  const drv = document.getElementById("drv"), veh = document.getElementById("veh"), err = document.getElementById("home-err");
+  if(!drv.value.trim() || !veh.value.trim()){
+    err.textContent = "氏名と本日の担当車を入力してください";
+    (!drv.value.trim() ? drv : veh).focus(); return;
+  }
+  if(!/^\d+$/.test(veh.value.trim())){ err.textContent = "担当車は数字で入力してください"; veh.focus(); return; }
+  err.textContent = "";
+  S.vehicle = veh.value.trim(); S.driver = drv.value.trim();
+  addRow("業務開始", {note:"社用使用"}); go("odoStart");
 }
 const $ = id => document.getElementById(id);
 function bind(st){
