@@ -41,6 +41,9 @@
   input[type=number]{width:100%;font-size:28px;padding:12px;border:2px solid var(--line);border-radius:8px;
     background:var(--bg);color:var(--ink);font-variant-numeric:tabular-nums}
   input[type=number]:focus{outline:3px solid var(--blue);border-color:var(--blue)}
+  select#veh{width:100%;font:inherit;font-size:28px;padding:12px;border:2px solid var(--line);border-radius:8px;
+    background:var(--bg);color:var(--ink);font-variant-numeric:tabular-nums}
+  select#veh:focus{outline:3px solid var(--blue);border-color:var(--blue)}
   button{width:100%;font:inherit;font-size:22px;font-weight:700;padding:18px;border:0;border-radius:10px;
     background:var(--go);color:var(--go-ink);cursor:pointer;margin-top:12px}
   button.alt{background:var(--blue);color:#fff}
@@ -130,6 +133,13 @@
 <script>
 "use strict";
 // 点呼を行う運行管理者(補助者)。追加するときはここに足す
+// 担当車: 610〜620（614は除く）
+const CAR_NOS = [610,611,612,613,615,616,617,618,619,620].map(String);
+const carOpts = (cur, blank) => {
+  const list = cur && !CAR_NOS.includes(cur) ? [cur, ...CAR_NOS] : CAR_NOS;   // 既存の値が範囲外でも、編集時に消えないようにする
+  return (blank ? `<option value=""${cur?"":" selected"}>選択してください</option>` : "") +
+    list.map(n=>`<option value="${n}"${n===cur?" selected":""}>${n}</option>`).join("");
+};
 const MANAGERS = [
   {name:"中村泰輔", role:"運行管理者・整備管理補助者", alias:["中村"]},
   {name:"内田麗子", role:"運行管理補助者・整備管理補助者", alias:["内田レ"]},
@@ -823,11 +833,11 @@ function render(){
   updateMeta();
   let h = "";
   if(st==="home"){
-    h = `<div class="panel"><p class="note" style="font-size:17px;font-weight:700;color:var(--ink)">自身のフルネームと本日の担当車を入力してください</p>
+    h = `<div class="panel"><p class="note" style="font-size:17px;font-weight:700;color:var(--ink)">自身のフルネームを入力し、本日の担当車を選択してください</p>
          <label for="drv">氏名</label>
          <input id="drv" type="text" autocomplete="name" placeholder="例: 山田 太郎" value="${escH(S.driver||"")}">
          <label for="veh">担当車</label>
-         <input id="veh" type="number" inputmode="numeric" min="0" step="1" placeholder="例: 12" value="${escH(S.vehicle||"")}">
+         <select id="veh">${carOpts(S.vehicle||"", true)}</select>
          <label style="font-size:16px;margin-top:18px">音声入力の言語</label>
          <div class="row"><button type="button" class="seg vseg${vlang()==="ja"?" on":""}" data-v="ja">日本語</button><button type="button" class="seg vseg${vlang()==="zh"?" on":""}" data-v="zh">中文</button></div>
          <p class="err" id="home-err" role="alert"></p>
@@ -904,7 +914,7 @@ function fieldsHtml(r, p){
       <label for="${p}lng">経度</label><input id="${p}lng" type="text" inputmode="decimal" value="${escH(r.lng)}">`;
   if(r.kind==="業務開始")
     f += `<label for="${p}drv">氏名</label><input id="${p}drv" type="text" value="${escH(S.driver||"")}">
-      <label for="${p}veh">担当車</label><input id="${p}veh" type="number" inputmode="numeric" min="0" step="1" value="${escH(S.vehicle||"")}">`;
+      <label for="${p}veh">担当車</label><select id="${p}veh">${carOpts(S.vehicle||"", false)}</select>`;
   if(r.kind==="出発点呼"){
     const cur = mgrFromNote(r.note);
     f += `<label for="${p}mgr">運行管理者・整備管理者(補助者)</label><select id="${p}mgr">
@@ -1205,7 +1215,7 @@ function readRowFields(r, p){
   }
   if(r.kind==="業務開始"){
     v.veh = g("veh").value.trim(); v.drv = g("drv").value.trim();
-    if(!/^\d+$/.test(v.veh)) return {err:"担当車の番号を数値で入力してください"};
+    if(!/^\d+$/.test(v.veh)) return {err:"担当車を選択してください"};
   }
   if(r.kind==="出発点呼"){ v.mgr = g("mgr").value; v.note = `運行管理者・整備管理者(補助者): ${v.mgr}`; }
   else v.note = g("note").value.trim();
@@ -1274,10 +1284,10 @@ function saveGroupEdit(){
 function startCorp(){
   const drv = document.getElementById("drv"), veh = document.getElementById("veh"), err = document.getElementById("home-err");
   if(!drv.value.trim() || !veh.value.trim()){
-    err.textContent = "氏名と本日の担当車を入力してください";
+    err.textContent = "氏名を入力し、本日の担当車を選択してください";
     (!drv.value.trim() ? drv : veh).focus(); return;
   }
-  if(!/^\d+$/.test(veh.value.trim())){ err.textContent = "担当車は数字で入力してください"; veh.focus(); return; }
+  if(!/^\d+$/.test(veh.value.trim())){ err.textContent = "担当車を選択してください"; veh.focus(); return; }
   err.textContent = "";
   S.vehicle = veh.value.trim(); S.driver = drv.value.trim();
   addRow("業務開始", {note:"社用使用"}); go("odoStart");
@@ -1287,7 +1297,7 @@ function bind(st){
   if(st==="home"){
     const veh = $("veh"), btn = $("start");
     const upd = ()=>{ btn.disabled = !/^\d+$/.test(veh.value.trim()); };   // 未入力の間は押せない
-    veh.oninput = upd; upd();
+    veh.onchange = veh.oninput = upd; upd();
     btn.onclick = ()=>{ if(btn.disabled) return; S.vehicle = veh.value.trim(); S.driver = $("drv").value.trim(); addRow("業務開始"); go("inspect"); };
   }
   if(st==="inspect"){
