@@ -287,8 +287,16 @@ function csvText(){
   return [head, ...S.rows.map(r=>[r.kind,r.time,S.vehicle||"",S.driver||"",r.odo,r.fuel,r.lat,r.lng,r.addr,r.note,r.end]), ...extra]
     .map(a=>a.map(esc).join(",")).join("\r\n");
 }
+// 共有ファイル名: 「日報 - 車両番号 - YYYY／MM／DD」(車両=本日の担当車、日付=出庫した日)
+// ※ファイル名に半角の「/」は使えないため、見た目が同じ全角の「／」にしている
+function nippoName(ext){
+  const r = S.rows.find(x=>x.kind==="乗務開始") || S.rows[0];
+  const d = ((r && r.time) || now()).slice(0,10).replace(/-/g,"／");
+  const v = String(S.vehicle||"").replace(/[\\\/:*?"<>|]/g,"").trim() || "車両未設定";
+  return `日報 - ${v} - ${d}.${ext}`;
+}
 function csvFile(){
-  const name = `運転日報_${(S.rows[0]?.time||now()).slice(0,10)}.csv`;
+  const name = nippoName("csv");
   return new File(["\uFEFF"+csvText()], name, {type:"text/csv"});
 }
 function download(){
@@ -471,7 +479,7 @@ function jpegToPdf({jpg,pw,ph}){
 }
 async function makePdf(){
   const blob = jpegToPdf(await nippoJpeg());
-  return new File([blob], `運転日報_${(S.rows[0]?.time||now()).slice(0,10)}.pdf`, {type:"application/pdf"});
+  return new File([blob], nippoName("pdf"), {type:"application/pdf"});
 }
 // 画面表示時に先に作っておく(「日報作成」を押したときの待ち時間を減らす)。記録が変われば作り直す
 function pdfFile(){
