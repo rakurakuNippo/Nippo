@@ -94,6 +94,10 @@ let dateStr = "";
 if(t0){ const d = new Date(t0.slice(0,10)+"T00:00:00");
   dateStr = `${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日 (${WD[d.getDay()]})`; }
 const veh = S.vehicle || "";
+// 車両名 → 車両番号(ナンバー)(日報印刷.html と同じ対応表)。保存される車両名は「616」。「768」「768（旧616）」でも同じナンバーにする
+const PLATE = {"610":"江戸川310あ610","611":"江戸川310あ611","612":"江戸川310あ612","613":"江戸川310あ613","615":"江戸川310あ615",
+  "616":"江戸川300あ768","768":"江戸川300あ768","617":"江戸川300あ617","618":"江戸川300あ618","619":"江戸川510あ619","620":"江戸川310あ620"};
+const plateOf = x => { const t = String(x==null ? "" : x).trim().replace(/[０-９]/g, c=>String.fromCharCode(c.charCodeAt(0) - 65248)), m = t.match(/^(\d{3})(?!\d)/); return m && PLATE[m[1]] || ""; };
 
 // 出発→到着の1組ごと。帰庫で終わる組(出発→帰庫)は回送とみなす
 const legs = []; let cur = null;
@@ -142,7 +146,7 @@ document.getElementById("sheet").innerHTML = `
 <div class="hd">
   <div class="date" style="width:140px">${esc(dateStr)}</div>
   <div class="it" style="width:94px"><label>車両名</label><div class="val">${esc(veh)}</div></div>
-  <div class="it" style="width:133px"><label>車両番号</label><div class="val"></div></div>
+  <div class="it" style="width:133px"><label>車両番号</label><div class="val">${esc(plateOf(veh))}</div></div>
   <div class="it"><label>運転者氏名</label><input type="text" value="${esc(S.driver||"")}"></div>
 </div>
 <div class="main">
