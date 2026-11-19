@@ -135,10 +135,11 @@
 // 点呼を行う運行管理者(補助者)。追加するときはここに足す
 // 担当車: 610〜620（614は除く）
 const CAR_NOS = [610,611,612,613,615,616,617,618,619,620].map(String);
+const CAR_LABEL = {"616":"768（旧616）"};   // 選択肢の表示名だけを変える(保存される車両番号は従来どおり「616」)
 const carOpts = (cur, blank) => {
   const list = cur && !CAR_NOS.includes(cur) ? [cur, ...CAR_NOS] : CAR_NOS;   // 既存の値が範囲外でも、編集時に消えないようにする
   return (blank ? `<option value=""${cur?"":" selected"}>選択してください</option>` : "") +
-    list.map(n=>`<option value="${n}"${n===cur?" selected":""}>${n}</option>`).join("");
+    list.map(n=>`<option value="${n}"${n===cur?" selected":""}>${CAR_LABEL[n]||n}</option>`).join("");
 };
 const MANAGERS = [
   {name:"中村泰輔", role:"運行管理者・整備管理補助者", alias:["中村"]},
